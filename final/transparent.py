@@ -215,6 +215,6 @@ def main():
 
 if __name__ == "__main__":
     # Directly set your Google API key here
-    api_key = "AIzaSyC8jYNEOQEnjGZruorG9qpuc8GO79DNyBc"
+    api_key = "{Your Api}"
     genai.configure(api_key=api_key)
     main()
