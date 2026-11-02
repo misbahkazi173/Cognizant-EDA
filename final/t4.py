@@ -1,0 +1,169 @@
+import os
+import time
+import streamlit as st
+import pandas as pd
+#from pandas_profiling import ProfileReport
+from ydata_profiling import ProfileReport
+import google.generativeai as genai
+
+def upload_to_gemini(path, mime_type=None):
+    """Uploads the given file to Gemini."""
+    file = genai.upload_file(path, mime_type=mime_type)
+    st.write(f"Uploaded file '{file.display_name}' as: {file.uri}")
+    return file
+
+def wait_for_files_active(files):
+    """Waits for the given files to be active."""
+    st.write("Waiting for file processing...")
+    for name in (file.name for file in files):
+        file = genai.get_file(name)
+        while file.state.name == "PROCESSING":
+            st.write(".", end="", flush=True)
+            time.sleep(10)
+            file = genai.get_file(name)
+        if file.state.name != "ACTIVE":
+            raise Exception(f"File {file.name} failed to process")
+    st.write("...all files ready")
+    st.write()
+
+def initialize_model():
+    """Initializes the Generative Model."""
+    generation_config = {
+        "temperature": 1,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_output_tokens": 8192,
+        "response_mime_type": "text/plain",
+    }
+
+    return genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        generation_config=generation_config,
+    )
+
+def get_dataset_summary(file, model):
+    """Get a quick summary of the dataset."""
+    chat_session = model.start_chat(
+        history=[
+            {
+                "role": "user",
+                "parts": [
+                    file,
+                    "whats the content ",
+                ],
+            },
+            {
+                "role": "model",
+                "parts": [
+                    "",
+                ],
+            },
+        ]
+    )
+    response = chat_session.send_message("Give a quick summary of the dataset in a paragraph")
+    return response.text
+
+def get_suggestions(file, model):
+    """Get suggestions for the most likely questions."""
+    chat_session = model.start_chat(
+        history=[
+            {
+                "role": "user",
+                "parts": [
+                    file,
+                    "What are the 10 most likely questions a user may ask about this dataset?",
+                ],
+            },
+            {
+                "role": "model",
+                "parts": [
+                    "",
+                ],
+            },
+        ]
+    )
+    response = chat_session.send_message("Give 10 most likely questions")
+    return response.text.split('\n')
+
+def main():
+    st.title("Dataset Analysis with Google Generative AI")
+    
+    # File Upload in Sidebar
+    st.sidebar.header("Upload CSV File")
+    uploaded_file = st.sidebar.file_uploader("Upload your CSV file", type="csv")
+    
+    if uploaded_file is not None:
+        with open("uploaded_file.csv", "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        file = upload_to_gemini("uploaded_file.csv", mime_type="text/csv")
+        wait_for_files_active([file])
+        
+        # Initialize Model
+        model = initialize_model()
+        
+        # Quick Summary
+        st.header("Dataset Summary")
+        summary = get_dataset_summary(file, model)
+        st.write(summary)
+        
+        # Load the dataset
+        df=pd.read_csv("uploaded_file.csv")
+        profile=ProfileReport(df)
+        profile.to_file(output_file="output.html")
+        st.write("Profile Report Generated")
+
+        # Suggestions for Likely Questions
+        st.header("Likely Questions")
+        suggestions = get_suggestions(file, model)
+        for question in suggestions:
+            st.write(question)
+        
+        # Initialize chat history
+        if 'chat_history' not in st.session_state:
+            st.session_state.chat_history = []
+
+        # Display chat history
+        st.header("Chat History")
+        for chat in st.session_state.chat_history:
+            st.write(chat)
+
+        # User Query Section
+        st.header("Ask Your Query")
+        user_query = st.text_input("Enter your query")
+        if user_query:
+            chat_session = model.start_chat(
+                history=[
+                    {
+                        "role": "user",
+                        "parts": [
+                            file,
+                            user_query,
+                        ],
+                    },
+                    {
+                        "role": "model",
+                        "parts": [
+                            "",
+                        ],
+                    },
+                ]
+            )
+            response = chat_session.send_message(user_query)
+            st.write(response.text)
+            
+            # Update chat history
+            st.session_state.chat_history.append(f"User: {user_query}")
+            st.session_state.chat_history.append(f"Model: {response.text}")
+
+            # Save chat history to a file
+            with open(f"{file.display_name}_chat.txt", "a") as chat_file:
+                chat_file.write(f"User: {user_query}\nModel: {response.text}\n\n")
+
+if __name__ == "__main__":
+    # Set your Google API key here
+    api_key = "AIzaSyC8jYNEOQEnjGZruorG9qpuc8GO79DNyBc"
+    genai.configure(api_key=api_key)
+    main()
+
+#working
